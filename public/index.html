@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>UNO Online</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<h1>UNO Online</h1>
+
+<input id="roomInput" placeholder="Room Code">
+<button onclick="join()">Join</button>
+
+<h2 id="turn"></h2>
+<div id="topCard"></div>
+<div id="hand"></div>
+
+<script src="/socket.io/socket.io.js"></script>
+<script src="game.js"></script>
+</body>
+</html>
