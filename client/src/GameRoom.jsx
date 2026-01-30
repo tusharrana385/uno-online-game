@@ -77,12 +77,17 @@ export default function GameRoom({ roomId, playerName }) {
             {card.value}
           </div>
         ))}
-      </div>
+      
 
       <br />
       <button onClick={() => socket.emit("drawCard", roomId)}>
         Draw Card
       </button>
     </div>
+  
+    <button onClick={() => socket.emit("sayUNO", roomId)}>
+      UNO!
+      </button>);
+      </div>
   );
 }

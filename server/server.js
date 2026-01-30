@@ -1,3 +1,4 @@
+
 const io = require("socket.io")(3001, {
   cors: { origin: "http://localhost:3000" }
 });
@@ -92,7 +93,38 @@ function applyCardEffect(card, game) {
       nextTurn(game);
       break;
   }
+
+    if (card.value === "+2") {
+      game.drawStack = (game.drawStack || 0) + 2;
+    }
+    else if (card.value === "+4") {
+      game.drawStack = (game.drawStack || 0) + 4;
+    }
+
+    if (game.drawStack && card.value !== "+2" && card.value !== "+4") {
+    // Must draw stacked cards
+    for (let i = 0; i < game.drawStack; i++) {
+      game.hands[playerId].push(game.deck.pop());
+    }
+    game.drawStack = 0;
+    nextTurn(game);
+    emitRoomState(roomId);
+    return;
+  }
+
+
 }
+
+function addBot(roomId) {
+  const botId = "bot_" + Date.now();
+
+  rooms[roomId].players.push({
+    id: botId,
+    name: "UNO Bot",
+    isBot: true
+  });
+}
+
 
 /* -------- PUBLIC STATE -------- */
 
@@ -132,12 +164,6 @@ function startTurnTimer(roomId) {
   turnTimers[roomId] = setTimeout(() => {
     const game = room.game;
     const playerId = game.players[game.turn];
-
-    if (game.deck.length) game.hands[playerId].push(game.deck.pop());
-
-    nextTurn(game);
-    emitRoomState(roomId);
-    startTurnTimer(roomId);
   }, TURN_TIME);
 }
 
@@ -147,26 +173,50 @@ io.on("connection", socket => {
   console.log("Connected:", socket.id);
 
   socket.on("findMatch", playerName => {
-    if (waitingPlayer && waitingPlayer.id !== socket.id) {
-      const roomId = "room-" + Date.now();
-      rooms[roomId] = { players: [], game: null, chat: [] };
 
-      io.to(waitingPlayer.id).emit("matchFound", roomId);
-      socket.emit("matchFound", roomId);
+    const MAX_PLAYERS = 4;
 
-      waitingPlayer = null;
-    } else {
-      waitingPlayer = { id: socket.id, name: playerName };
-      socket.emit("systemMessage", "Waiting for opponent...");
-    }
-  });
+    socket.on("findMatch", playerName => {
+      if (!waitingPlayer) {
+        waitingPlayer = [];
+      }
+
+      waitingPlayer.push({ id: socket.id, name: playerName });
+
+      if (waitingPlayer.length >= MAX_PLAYERS) {
+        const roomId = "room-" + Date.now();
+        rooms[roomId] = { players: waitingPlayer, game: null, chat: [] };
+
+        waitingPlayer.forEach(p => {
+          io.to(p.id).emit("matchFound", roomId);
+        });
+
+        waitingPlayer = [];
+      }
+
+     
+
+    }); return;
+    })
+
+ ;
+
+
+  socket.on("sayUNO", roomId => {
+  const room = rooms[roomId];
+  if (!room?.game) return;
+
+  const player = room.players.find(p => p.id === socket.id);
+  if (player) player.saidUNO = true;
+});
+
 
   socket.on("joinRoom", ({ roomId, playerName }) => {
     if (!rooms[roomId]) return;
 
     socket.join(roomId);
 
-    rooms[roomId].players.push({ id: socket.id, name: playerName });
+    rooms[roomId].players.push({ id: socket.id, name: playerName, saidUNO: false });
 
     if (rooms[roomId].players.length === 2) {
       rooms[roomId].game = createGame(rooms[roomId].players);
@@ -174,6 +224,53 @@ io.on("connection", socket => {
     }
 
     emitRoomState(roomId);
+
+    socket.on("joinRoom", ({ roomId, playerName }) => {
+  const room = rooms[roomId];
+  if (!room) return;
+
+  socket.join(roomId);
+
+  room.players.push({
+    id: socket.id,
+    name: playerName,
+    calledUno: false
+  });
+
+  function addBot(roomId) {
+          const botId = "bot_" + Date.now();
+
+          rooms[roomId].players.push({
+            id: botId,
+            name: "UNO Bot",
+            isBot: true
+          } );
+        if (rooms[roomId].players.length === 1) {
+          addBot(roomId);
+        };
+        }
+  if (room.players.length >= 2) {
+    room.game = createGame(room.players);
+    startTurnTimer(roomId);
+    botPlay(roomId);
+  }
+
+  if (game.deck.length) game.hands[playerId].push(game.deck.pop());
+
+    nextTurn(game);
+    emitRoomState(roomId);
+    startTurnTimer(roomId);
+    startTurnTimer(roomId);
+
+  if (room.players.length === 2) {
+    room.game = createGame(room.players);
+    startTurnTimer(roomId);   // ✅ CORRECT PLACE
+    botPlay(roomId);          // ✅ CORRECT PLACE
+  }
+
+  emitRoom(roomId);
+});
+
   });
 
   socket.on("sendChat", ({ roomId, message }) => {
@@ -217,9 +314,16 @@ io.on("connection", socket => {
       return;
     }
 
-    nextTurn(game);
-    emitRoomState(roomId);
-    startTurnTimer(roomId);
+    // UNO check
+    if (game.hands[socket.id].length === 1) {
+      const player = room.players.find(p => p.id === socket.id);
+      if (!player.saidUNO) {
+        game.hands[socket.id].push(game.deck.pop());
+        game.hands[socket.id].push(game.deck.pop());
+      }
+    player.saidUNO = false;
+  }
+
   });
 
   /* -------- DRAW CARD (TURN PROTECTED) -------- */
@@ -236,6 +340,31 @@ io.on("connection", socket => {
     nextTurn(game);
     emitRoomState(roomId);
     startTurnTimer(roomId);
+  
+    function botPlay(roomId) {
+    const room = rooms[roomId];
+    const game = room.game;
+    const botId = game.players[game.turn];
+
+    if (!botId.startsWith("bot")) return;
+
+    const hand = game.hands[botId];
+    const playable = hand.findIndex(c => canPlay(c, game.topCard, game.currentColor));
+
+    if (playable !== -1) {
+      const card = hand.splice(playable, 1)[0];
+      game.topCard = card;
+    } else {
+      hand.push(game.deck.pop());
+    }
+
+    nextTurn(game);
+    emitRoomState(roomId);
+  
+    setTimeout(() => botPlay(roomId), 1000);
+
+  }
+
   });
 
   socket.on("disconnect", () => {
@@ -252,4 +381,9 @@ io.on("connection", socket => {
       }
     }
   });
+
+  socket.on("gameOver", winnerId => {
+    alert(winnerId === socket.id ? "You Win! 🏆" : "You Lose!");
+  });
+
 });
